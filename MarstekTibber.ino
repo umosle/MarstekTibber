@@ -294,7 +294,7 @@ void handleUdpPacket(WiFiUDP& udp, const uint16_t port) {
 
   b2500OffAtMs = millis() + 250; // visualize UDP response send by flashing "M"
 
-  //Serial.print("[AstraTibber] UDP response on port ");
+  //Serial.print("[MarstekTibber] UDP response on port ");
   //Serial.print(port);
   //Serial.print(" for ");
   //Serial.println(request.substring(0, min((int)request.length(), 120)));
@@ -459,13 +459,13 @@ void setup() {
   setCpuFrequencyMhz(80); 
 
   setup_display(tibber_bridge_ip);
-  Serial.println("\n[AstraTibber] Starting Shelly Pro 3EM emulation");
+  Serial.println("\n[MarstekTibber] Starting Shelly Pro 3EM emulation");
 
   delay(200);
   WiFi.mode(WIFI_STA);
   WiFi.begin(kWifiSsid, kWifiPassword);
 
-  Serial.print("[AstraTibber] Connecting to Wi-Fi");
+  Serial.print("[MarstekTibber] Connecting to Wi-Fi");
   unsigned long startMs = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - startMs < 30000) {
     delay(250);
@@ -474,12 +474,12 @@ void setup() {
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println();
-    Serial.print("[AstraTibber] Wi-Fi connected, IP: ");
+    Serial.print("[MarstekTibber] Wi-Fi connected, IP: ");
     Serial.println(WiFi.localIP());
     ip_info_display(WiFi.localIP());
   } else {
     Serial.println();
-    Serial.println("[AstraTibber] Wi-Fi connection timed out; continuing anyway.");
+    Serial.println("[MarstekTibber] Wi-Fi connection timed out; continuing anyway.");
   }
 
   server.on("/", handleRoot);
@@ -490,15 +490,15 @@ void setup() {
   server.on("/rpc/EM1.GetStatus/", HTTP_GET, handleRpcEm1GetStatus);
   server.onNotFound(handleNotFound);
 
-  Serial.println("[AstraTibber] starting HTTP server.");
+  Serial.println("[MarstekTibber] starting HTTP server.");
   server.begin();
 
-  Serial.println("[AstraTibber] starting UDP listeners on ports 1010, 2220 and 2223");
+  Serial.println("[MarstekTibber] starting UDP listeners on ports 1010, 2220 and 2223");
   udpOld.begin(1010);
   udpNew.begin(2220);
   udpEm50.begin(2223);
 
-  Serial.println("[AstraTibber] Wait before polling Tibber Bridge...");
+  Serial.println("[MarstekTibber] Wait before polling Tibber Bridge...");
   delay(5000); 
 
   // Core 0: RTOS, WiFi stack, Display
