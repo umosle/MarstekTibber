@@ -10,3 +10,6 @@ This comes in form of an ESP32 Arduino project, which has been created for a Lil
 2. Find out the IP address of your Tibber Bridge and add the Bridge password
 3. Confirm the correct node ID running your Tibber Bridge by accessing its local web interface
 4. In the Marstek app, tap on discharge configuration, automatic and select the Shelly PRO EM-50 device. You should see on phase A and Total the actual power value received from the Tibber Pulse/Bridge
+
+## Tibber
+In case you are anyway intend to subcribe to Tibber as your energy provider and you want to do me a favour, you could consider to use the following invitation code: mvr2g715
