@@ -12,4 +12,4 @@ This comes in form of an ESP32 Arduino project, which has been created for a Lil
 4. In the Marstek app, tap on discharge configuration, automatic and select the Shelly PRO EM-50 device. You should see on phase A and Total the actual power value received from the Tibber Pulse/Bridge
 
 ## Tibber
-In case you are anyway intend to subcribe to Tibber as your energy provider and you want to do me a favour, you could consider to use the following invitation code: mvr2g715
+In case you intend to subcribe to Tibber as your energy provider anyway and you want to do me a favour, you could consider to use the following invitation code: mvr2g715
