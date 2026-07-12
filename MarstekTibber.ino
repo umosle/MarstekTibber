@@ -7,7 +7,7 @@
 // energy meter.
 //
 // Notes:
-// - The sketch intentionally kept compatible to the AstraMeter by Tomquist.
+// - The sketch intentionally kept comparable to the AstraMeter by Tomquist.
 // - It is intended for users, who do not want to run HomeAssistant at a more
 //   power consuming hardware.
 // - The power consumption value is stored in a global variable and is
