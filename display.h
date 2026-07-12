@@ -1,4 +1,4 @@
-// Display routines for the AstraTibber project
+// Display routines for the MarstekTibber project
 
 #pragma once                  // don't include twice
 #include <Arduino.h> 

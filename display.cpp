@@ -1,4 +1,4 @@
-// Display routines for the AstraTibber project
+// Display routines for the MarstekTibber project
 
 #include <TFT_eSPI.h> 
 #include "display.h"
