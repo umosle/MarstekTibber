@@ -1,5 +1,5 @@
 // -----------------------------------------------------------------------------
-// AstraTibber_260614
+// MarstekTibber_260614
 // -----------------------------------------------------------------------------
 // ESP32 implementation for a Shelly Pro 3EM-style emulator on the
 // Lilygo T-Display. The goal is to provide a stable UDP surface that a
