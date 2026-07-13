@@ -13,6 +13,8 @@ This comes in form of an ESP32 Arduino project, which has been created for a Lil
 
 ## Goals & Advantages
 - small power footprint
+- no need for home assistant and mqtt servers
+- avoids flash endurance issues
 - cheap hardware
 - simple, minimalistic project
 - easy to install
