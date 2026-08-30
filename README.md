@@ -6,10 +6,11 @@ This comes in form of an ESP32 Arduino project, which has been created for a Lil
 <img width="2043" height="1351" alt="TTGO_export" src="https://github.com/user-attachments/assets/115fcbca-7758-4741-95cb-a28e07b5154e" />
 
 ## Configuration
-1. Add your WiFi SSID and password
-2. Find out the IP address of your Tibber Bridge and add the Bridge password
-3. Confirm the correct node ID running your Tibber Bridge by accessing its local web interface
-4. In the Marstek app, tap on discharge configuration, automatic and select the Shelly PRO EM-50 device. You should see on phase A and Total the actual power value received from the Tibber Pulse/Bridge
+1. Add your WiFi SSID and password.
+2. Find out the IP address of your Tibber Bridge and add the Bridge password.
+3. Confirm the correct node ID running your Tibber Bridge by accessing its local web interface.
+4. In the Marstek app, tap on discharge configuration, automatic and select the Shelly PRO EM-50 device. You should see on phase A and Total the actual power value received from the Tibber Pulse/Bridge.
+5. Prooven good values for decayPowBetweenSamples = 0.70 used with one battery, decayPowBetweenSamples = 0.85 for two batteries. Just got my second battery and tested it with connecting out 1 of each battery toone input of the Marstek inverter.
 
 ## Goals & Advantages
 - small power footprint
