@@ -8,9 +8,9 @@
 #define             COLOR_PULSE              0x37FF  
 #define             COLOR_B2500              0x915F
 
-const int           T_XPos                 = 160;
+const int           T_XPos                 = 105;
 const int           T_YPos                 = 10;
-const int           M_XPos                 = 200;
+const int           M_XPos                 = 145;
 const int           M_YPos                 = 10;
 
 // --- Graph configuration for power meter data ---
@@ -26,6 +26,12 @@ extern int          g_powerHistory[kGraphMaxSamples];
 extern int          g_historyCount;
 extern int          g_historyIndex;
 
+// Variablen für Multi-Batterie-Anzeige
+constexpr int kMaxBatteries = 4;
+extern IPAddress g_batteryIPs[kMaxBatteries];
+extern volatile unsigned long g_batteryTimers[kMaxBatteries];
+extern volatile int g_registeredBatteriesCount;
+extern const uint16_t g_batteryColors[kMaxBatteries];
 
 // public API for the main sketch
 void display_management_task(void *parameter);

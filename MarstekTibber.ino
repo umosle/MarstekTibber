@@ -48,7 +48,7 @@ const unsigned long tibberIntervalMs        = 3000;
 // 1. if tibber connection lost decay power slowly over 5 minutes
 // 2. in between samples a slight decay might help against nervouse polling within
 //    dead time of tibber pulse
-const float         decayPowBetweenSamples  = 0.80f; // next sample 80% of actual
+const float         decayPowBetweenSamples  = 0.85f; // last value was 80%
 
 // -----------------------------------------------------------------------------
 // Runtime state
@@ -69,6 +69,18 @@ volatile bool          triggerScreenRefresh = false;
 volatile bool          tibberConnected      = false;
 volatile unsigned long pulseOffAtMs         = 0;
 volatile unsigned long b2500OffAtMs         = 0;
+
+// -----------------------------------------------------------------------------
+// Dynamische Batterie-Registrierung
+// -----------------------------------------------------------------------------
+IPAddress g_batteryIPs[kMaxBatteries];              // Speichert die IPs der erkannten Batterien
+volatile unsigned long 
+    g_batteryTimers[kMaxBatteries] = {0, 0, 0, 0};  // Flash-Timer pro Batterie
+volatile int g_registeredBatteriesCount = 0;        // Aktuelle Anzahl gefundener Batterien
+
+// Farbdefinitionen (Magenta, Grün, Orange, Cyan)
+const uint16_t g_batteryColors[kMaxBatteries] = { 0x915F, 0x07E0, 0xFBE0, 0x07FF };
+
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -288,11 +300,40 @@ void handleUdpPacket(WiFiUDP& udp, const uint16_t port) {
     return;
   }
 
-  udp.beginPacket(udp.remoteIP(), udp.remotePort());
+  IPAddress remoteIP = udp.remoteIP();
+  udp.beginPacket(remoteIP, udp.remotePort());
   udp.printf("%s", response.c_str());
   udp.endPacket();
 
-  b2500OffAtMs = millis() + 250; // visualize UDP response send by flashing "M"
+  // ---- DYNAMISCHE ZUORDNUNG ----
+  int batteryIndex = -1;
+  
+  // Suchen, ob diese IP bereits registriert ist
+  for (int i = 0; i < g_registeredBatteriesCount; i++) {
+      if (g_batteryIPs[i] == remoteIP) {
+          batteryIndex = i;
+          break;
+      }
+  }
+
+  // Falls die IP neu ist und wir noch Platz haben (< 4), registrieren wir sie
+  if (batteryIndex == -1 && g_registeredBatteriesCount < kMaxBatteries) {
+      batteryIndex = g_registeredBatteriesCount;
+      g_batteryIPs[batteryIndex] = remoteIP;
+      g_registeredBatteriesCount++;
+      Serial.printf("[MarstekTibber] Neue Batterie %d registriert von IP: %s\n", 
+                    g_registeredBatteriesCount, remoteIP.toString().c_str());
+  }
+
+  // Wenn die Batterie erfolgreich zugewiesen wurde (bekannt oder neu registriert)
+  if (batteryIndex != -1) {
+      g_batteryTimers[batteryIndex] = millis() + 250; // Setze den Timer für dieses spezifische "M"
+  }
+
+  triggerScreenRefresh = true;
+
+
+  //b2500OffAtMs = millis() + 250; // visualize UDP response send by flashing "M"
 
   //Serial.print("[MarstekTibber] UDP response on port ");
   //Serial.print(port);

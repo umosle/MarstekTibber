@@ -73,7 +73,7 @@ void drawGraph() {
 
 volatile bool                 T_drawn       = false;
 volatile bool                 B_drawn       = false;
-volatile bool                 M_drawn       = false;
+volatile bool M_drawn[kMaxBatteries] = {false, false, false, false};
 
 void updateActivityIndicators() {
   unsigned long now = millis();
@@ -95,14 +95,19 @@ void updateActivityIndicators() {
   }
 
   // "M" for answered Marstek UDP broadcast
-  if (now < b2500OffAtMs && !M_drawn) {
-    tft.setTextColor(COLOR_B2500);
-    tft.drawString("M", M_XPos, M_YPos);
-	M_drawn = true;
-  } else {
-	if (M_drawn) {
-      tft.fillRect(M_XPos, M_YPos, 20, 25, TFT_BLACK);
-	  M_drawn = false;
+  int spacingX = 22; // Pixel-Versatz pro Buchstabe bei Textgröße 3
+    
+    for (int i = 0; i < g_registeredBatteriesCount; i++) {
+        int currentM_XPos = M_XPos + (i * spacingX);
+
+        if (now < g_batteryTimers[i] && !M_drawn[i]) {
+            tft.setTextColor(g_batteryColors[i]);
+            tft.drawString("M", currentM_XPos, M_YPos);
+            M_drawn[i] = true;
+        } else if (now >= g_batteryTimers[i] && M_drawn[i]) {
+            // Nur die Box dieses spezifischen Buchstabens löschen
+            tft.fillRect(currentM_XPos, M_YPos, 20, 25, TFT_BLACK);
+            M_drawn[i] = false;
 	}
   }
 }
@@ -114,7 +119,10 @@ void display_management_task(void *parameter) {
       tft.fillScreen(TFT_BLACK);
 	  T_drawn = false;
       B_drawn = false;
-      M_drawn = false; 
+      // Alle M-Zustände zurücksetzen bei Full-Screen-Refresh
+      for (int i = 0; i < kMaxBatteries; i++) {
+          M_drawn[i] = false;
+       }
 	  
       tft.setTextSize(3);
 	  
@@ -128,10 +136,10 @@ void display_management_task(void *parameter) {
       // Utility grid meter status
       if (g_currentPowerWatts >= 0) {
         tft.setTextColor(TFT_RED);
-        tft.drawString("Import", 10, 10);
+        tft.drawString("Imp", 10, 10);
       } else {
         tft.setTextColor(TFT_GREEN);
-        tft.drawString("Export", 10, 10);
+        tft.drawString("Exp", 10, 10);
       }
       tft.setTextColor(TFT_WHITE);
       String wattStr = String((int)g_currentPowerWatts);
@@ -156,7 +164,7 @@ void setup_display(const char *tibber_bridge_ip) {
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE);
   tft.drawString("Connecting...", 10, 10);
-  ipLine = String("Bridge: ") + tibber_bridge_ip;
+  ipLine = String("Brdg: ") + tibber_bridge_ip;
   tft.drawString(ipLine, 10, 30);
 }
 
