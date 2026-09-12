@@ -24,11 +24,11 @@ Just got my second battery and tested it with connecting out 1 of each battery t
 - efficient use of small batteries at peak prices for dynamic tarrifs
 
 ## Build in web server routes
-/ - to access the energy dashboard
-/status - json: basic state and live power consumption
-/prices - json: prices and consumption for each of 15 min intervals
-/rpc/EM.GetStatus - json: emulated Shelly Pro 3EM response
-/rpc/EM1.GetStatus - json: emulated Shelly Pro EM50 response
+- / - to access the energy dashboard
+- /status - json: basic state and live power consumption
+- /prices - json: prices and consumption for each of 15 min intervals
+- /rpc/EM.GetStatus - json: emulated Shelly Pro 3EM response
+- /rpc/EM1.GetStatus - json: emulated Shelly Pro EM50 response
 
 ## Tibber
 In case you intend to subcribe to Tibber as your energy provider anyway and you want to do me a favour, you could consider to use the following invitation code: mvr2g715
