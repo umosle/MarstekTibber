@@ -10,7 +10,9 @@ This comes in form of an ESP32 Arduino project, which has been created for a Lil
 2. Find out the IP address of your Tibber Bridge and add the Bridge password.
 3. Confirm the correct node ID running your Tibber Bridge by accessing its local web interface.
 4. In the Marstek app, tap on discharge configuration, automatic and select the Shelly PRO EM-50 device. You should see on phase A and Total the actual power value received from the Tibber Pulse/Bridge.
-5. Prooven good values for decayPowBetweenSamples = 0.70 used with one battery, decayPowBetweenSamples = 0.85 for two batteries. Just got my second battery and tested it with connecting out 1 of each battery to one input of the Marstek inverter.
+5. Prooven good values for decayPowBetweenSamples = 0.70 
+6. For dynamic price information add your Tibber access token and your Home-ID
+Just got my second battery and tested it with connecting out 1 of each battery to one input of the Marstek inverter.
 
 ## Goals & Advantages
 - small power footprint
@@ -19,6 +21,14 @@ This comes in form of an ESP32 Arduino project, which has been created for a Lil
 - cheap hardware
 - simple, minimalistic project
 - easy to install
+- efficient use of small batteries at peak prices for dynamic tarrifs
+
+## Build in web server routes
+/ - to access the energy dashboard
+/status - json: basic state and live power consumption
+/prices - json: prices and consumption for each of 15 min intervals
+/rpc/EM.GetStatus - json: emulated Shelly Pro 3EM response
+/rpc/EM1.GetStatus - json: emulated Shelly Pro EM50 response
 
 ## Tibber
 In case you intend to subcribe to Tibber as your energy provider anyway and you want to do me a favour, you could consider to use the following invitation code: mvr2g715

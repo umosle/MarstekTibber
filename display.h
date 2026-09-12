@@ -3,10 +3,16 @@
 #pragma once                  // don't include twice
 #include <Arduino.h> 
 
+// Variablen für Multi-Batterie-Anzeige
+constexpr int                 kMaxBatteries = 4;
+extern IPAddress              g_batteryIPs[kMaxBatteries];
+extern volatile unsigned long g_batteryTimers[kMaxBatteries];
+extern volatile int           g_registeredBatteriesCount;
 
 // --- Graph configuration for activity indicators T/M ---
 #define             COLOR_PULSE              0x37FF  
-#define             COLOR_B2500              0x915F
+// Farbdefinitionen                                   (Magenta, Grün,  Orange, Cyan)
+const uint16_t      g_batteryColors[kMaxBatteries] = { 0x915F, 0x07E0, 0xFBE0, 0x07FF };
 
 const int           T_XPos                 = 105;
 const int           T_YPos                 = 10;
@@ -20,21 +26,18 @@ constexpr int       kGraphWidth            = 185;        // Width (220 Samples)
 constexpr int       kGraphHeight           = 45;         // Height
 constexpr int       kGraphMaxSamples       = kGraphWidth;
 
-
-// definitions from display.cpp needed in AstraTibber.ino
+// definitions from display.cpp needed in main sketch
 extern int          g_powerHistory[kGraphMaxSamples];
 extern int          g_historyCount;
 extern int          g_historyIndex;
 
-// Variablen f�r Multi-Batterie-Anzeige
-constexpr int kMaxBatteries = 4;
-extern IPAddress g_batteryIPs[kMaxBatteries];
-extern volatile unsigned long g_batteryTimers[kMaxBatteries];
-extern volatile int g_registeredBatteriesCount;
-extern const uint16_t g_batteryColors[kMaxBatteries];
+
+// Zustand für die initiale Preisanzeige auf dem TFT
+extern volatile bool g_showInitialPrices;
 
 // public API for the main sketch
-void display_management_task(void *parameter);
-void setup_display(const char *tibber_bridge_ip);
-void ip_info_display(IPAddress localIP);
-
+void  display_management_task(void *parameter);
+void  setup_display(const char *tibber_bridge_ip);
+void  ip_info_display(IPAddress localIP);
+void  drawPriceGraph();
+float getCurrentIntervalPrice();

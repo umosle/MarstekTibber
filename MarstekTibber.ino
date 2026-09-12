@@ -8,7 +8,7 @@
 //
 // Notes:
 // - The sketch intentionally kept comparable to the AstraMeter by Tomquist.
-// - It is intended for users, who do not want to run HomeAssistant at a more
+// - It is intended for users, who do not want to run HomeAssistant on a more
 //   power consuming hardware.
 // - The power consumption value is stored in a global variable and is
 //   updated by a function that reads Tibber Pulse.
@@ -23,6 +23,14 @@
 //   15 to 25 seconds. On ShellyPro EM-50 data the Marstek firmware reacts 
 //   much faster.
 // -----------------------------------------------------------------------------
+// MarstekTibber_260910
+// -----------------------------------------------------------------------------
+// Support to enable battery only at price peaks. 
+// - number of most expensive intervals can be set in prices.h
+// - the window for peak detection will be set from 2 p.m to 2 p.m. of the 
+//   next day
+// Support for multiple batteries included.
+// -----------------------------------------------------------------------------
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <WebServer.h>
@@ -30,6 +38,8 @@
 #include <base64.h>
 
 #include "display.h"
+#include "prices.h"
+#include "index_html.h"
 
 // -----------------------------------------------------------------------------
 // Configuration
@@ -44,11 +54,15 @@ const char*         tibber_bridge_ip        = "192.168.178.65";
 const char*         tibber_bridge_password  = "B2CG-B***"; // code beside the QR
 const int           tibber_node_id          = 1;
 const unsigned long tibberIntervalMs        = 3000;
+const char*         TIBBER_ACCESS_TOKEN     = "5B******************************************************************34-1";
+const char*         TIBBER_HOME_ID          = "cc******-****-****-****-***********10c";
 
 // 1. if tibber connection lost decay power slowly over 5 minutes
 // 2. in between samples a slight decay might help against nervouse polling within
 //    dead time of tibber pulse
-const float         decayPowBetweenSamples  = 0.85f; // last value was 80%
+const float         decayPowBetweenSamples  = 0.70f; // adjust to avoid oscillation
+const int           BUTTON_PIN              = 0;     // Button for price screen (35-bottom or 0-top, USB left)
+
 
 // -----------------------------------------------------------------------------
 // Runtime state
@@ -58,29 +72,29 @@ WiFiUDP                udpOld;
 WiFiUDP                udpNew;
 WiFiUDP                udpEm50;
 
-volatile int           g_currentPowerWatts  = 0;
-volatile int           f_currentPowerWatts  = 0;
-volatile unsigned long g_lastPowerUpdateMs  = 0;
+volatile int           g_currentPowerWatts     = 0;
+volatile unsigned long g_lastPowerUpdateMs     = 0;
+volatile unsigned long g_priceScreenTriggerMs  = 1; 
 
-TaskHandle_t           tibberTaskHandle     = NULL;
-TaskHandle_t           displayTaskHandle    = NULL;
+// 15-min consumption average  int32_t avgPowerWatts;
+int32_t                g_pulsePowerSumInInterval = 0;
+uint32_t               g_pulseSamplesCount       = 0;
 
-volatile bool          triggerScreenRefresh = false;
-volatile bool          tibberConnected      = false;
-volatile unsigned long pulseOffAtMs         = 0;
-volatile unsigned long b2500OffAtMs         = 0;
+TaskHandle_t           tibberTaskHandle        = NULL;
+TaskHandle_t           displayTaskHandle       = NULL;
+
+volatile bool          triggerScreenRefresh    = false;
+volatile bool          tibberConnected         = false;
+volatile unsigned long pulseOffAtMs            = 0;
 
 // -----------------------------------------------------------------------------
 // Dynamische Batterie-Registrierung
 // -----------------------------------------------------------------------------
-IPAddress g_batteryIPs[kMaxBatteries];              // Speichert die IPs der erkannten Batterien
+volatile int  f_currentPowerWatts[kMaxBatteries] = {0, 0, 0, 0}; 
+IPAddress     g_batteryIPs[kMaxBatteries];          // Speichert die IPs der erkannten Batterien
 volatile unsigned long 
     g_batteryTimers[kMaxBatteries] = {0, 0, 0, 0};  // Flash-Timer pro Batterie
 volatile int g_registeredBatteriesCount = 0;        // Aktuelle Anzahl gefundener Batterien
-
-// Farbdefinitionen (Magenta, Grün, Orange, Cyan)
-const uint16_t g_batteryColors[kMaxBatteries] = { 0x915F, 0x07E0, 0xFBE0, 0x07FF };
-
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -214,17 +228,30 @@ int extractJsonInt(const String& json, const char* key) {
 // -----------------------------------------------------------------------------
 // UDP response formatting for Marstek B2500-D
 // -----------------------------------------------------------------------------
-String buildUdpResponse(const String& request) {
+String buildUdpResponse(const String& request, int batteryIndex) {
   const int requestId = extractJsonInt(request, "id");
   const String method = extractJsonString(request, "method");
 
-  // The battery only needs the JSON response and the requested power values.
-  const float total   = static_cast<float>(f_currentPowerWatts);
+  // invalid index
+  if (batteryIndex < 0 || batteryIndex >= kMaxBatteries) {
+    return String();
+  }
+  
+  // The indexed battery only needs the JSON response and the requested power values.
+  float total = 0.0f;
+  if (isCurrentIntervalExpensive()) {          // check Tibber prices
+    // Tell the battery the truth (Nulleinspeisung)
+    total = static_cast<float>(f_currentPowerWatts[batteryIndex]);
 
-  // Next sample for UDP in 1 second: let fake samples decline with 
-  // alpha 0.7 ... 0.9 until we get fresh value from tibber pulse
-  f_currentPowerWatts = static_cast<int>(static_cast<float>(
-						f_currentPowerWatts) * decayPowBetweenSamples);
+    // Next sample for UDP in ~1 second: let fake samples decline with 
+    // alpha 0.7 ... 0.9 until we get fresh value from tibber pulse
+    f_currentPowerWatts[batteryIndex] = static_cast<int>(static_cast<float>(
+				    f_currentPowerWatts[batteryIndex]) * decayPowBetweenSamples);
+  } else {
+    // Prices are moderate or cheap: mimic export situation
+    total = -10.0f;
+  }
+
 
   // Reserve buffer at stack (no heap)
   char jsonBuffer[384];
@@ -283,32 +310,20 @@ String buildUdpResponse(const String& request) {
 
 void handleUdpPacket(WiFiUDP& udp, const uint16_t port) {
   const int packetLen = udp.parsePacket();
-  if (packetLen <= 0) {
-    return;
-  }
+  if (packetLen <= 0) return;
 
   char packet[256];
   int len = udp.read(packet, sizeof(packet) - 1);
-  if (len <= 0) {
-    return;
-  }
+  if (len <= 0) return;
   packet[len] = '\0';
 
   String request(packet);
-  String response = buildUdpResponse(request);
-  if (response.length() == 0) {
-    return;
-  }
-
   IPAddress remoteIP = udp.remoteIP();
-  udp.beginPacket(remoteIP, udp.remotePort());
-  udp.printf("%s", response.c_str());
-  udp.endPacket();
 
-  // ---- DYNAMISCHE ZUORDNUNG ----
+  // ---- Dynamic assignment ----
   int batteryIndex = -1;
   
-  // Suchen, ob diese IP bereits registriert ist
+  // Search, if IP already registered
   for (int i = 0; i < g_registeredBatteriesCount; i++) {
       if (g_batteryIPs[i] == remoteIP) {
           batteryIndex = i;
@@ -316,24 +331,31 @@ void handleUdpPacket(WiFiUDP& udp, const uint16_t port) {
       }
   }
 
-  // Falls die IP neu ist und wir noch Platz haben (< 4), registrieren wir sie
+  // register, if IP is new and space left
   if (batteryIndex == -1 && g_registeredBatteriesCount < kMaxBatteries) {
       batteryIndex = g_registeredBatteriesCount;
       g_batteryIPs[batteryIndex] = remoteIP;
       g_registeredBatteriesCount++;
-      Serial.printf("[MarstekTibber] Neue Batterie %d registriert von IP: %s\n", 
+      Serial.printf("[MarstekTibber] New Battery %d registered with IP: %s\n", 
                     g_registeredBatteriesCount, remoteIP.toString().c_str());
   }
 
-  // Wenn die Batterie erfolgreich zugewiesen wurde (bekannt oder neu registriert)
+  // If battery was successfully assigned (now or before)
   if (batteryIndex != -1) {
-      g_batteryTimers[batteryIndex] = millis() + 250; // Setze den Timer für dieses spezifische "M"
+      g_batteryTimers[batteryIndex] = millis() + 250; // Set flash timer for the specific "M"
+  } else {
+    return; // array full
   }
 
+  // Build specific response for this battery
+  String response = buildUdpResponse(request, batteryIndex);
+  if (response.length() == 0) return;
+
+  udp.beginPacket(remoteIP, udp.remotePort());
+  udp.printf("%s", response.c_str());
+  udp.endPacket();
+
   triggerScreenRefresh = true;
-
-
-  //b2500OffAtMs = millis() + 250; // visualize UDP response send by flashing "M"
 
   //Serial.print("[MarstekTibber] UDP response on port ");
   //Serial.print(port);
@@ -341,6 +363,34 @@ void handleUdpPacket(WiFiUDP& udp, const uint16_t port) {
   //Serial.println(request.substring(0, min((int)request.length(), 120)));
 }
 
+// -----------------------------------------------------------------------------
+// Aggregiert die echten Pulse-Rohwerte für das aktuelle 15-Minuten-Intervall
+// -----------------------------------------------------------------------------
+void aggregate_power(int currentWatts) {
+  g_pulsePowerSumInInterval += currentWatts;
+  g_pulseSamplesCount++;
+
+  time_t nowTime = time(nullptr);
+  for (int i = 0; i < g_activeIntervalsCount; i++) {
+    // Suchen des aktuell laufenden Zeitfensters (900 Sekunden = 15 Min)
+    if (nowTime >= g_priceIntervals[i].startEpoch && nowTime < (g_priceIntervals[i].startEpoch + 900)) {
+      
+      if (g_pulseSamplesCount > 0) {
+        g_priceIntervals[i].avgPowerWatts = g_pulsePowerSumInInterval / g_pulseSamplesCount;
+      }
+
+      // Wenn das Intervall fast vorbei ist (die letzten 3 Sekunden), 
+      // setzen wir die Zähler für den nächsten anstehenden Intervall-Wechsel zurück
+      if (nowTime >= (g_priceIntervals[i].startEpoch + 897)) {
+        if (i < g_activeIntervalsCount - 1 && nowTime >= g_priceIntervals[i+1].startEpoch) {
+          g_pulsePowerSumInInterval = 0;
+          g_pulseSamplesCount = 0;
+        }
+      }
+      break;
+    }
+  }
+}
 
 // -----------------------------------------------------------------------------
 // Reading meter data from Pulse via Tibber Bridge
@@ -418,9 +468,19 @@ void tibber_polling_task(void *parameter) {
             }
 
             g_currentPowerWatts   = (int)(static_cast<float>(raw_power) * multiplier);
-            f_currentPowerWatts   = g_currentPowerWatts;
+            for (int i = 0; i < kMaxBatteries; i++) {
+              f_currentPowerWatts[i] = g_currentPowerWatts;
+            }
+
             g_lastPowerUpdateMs   = millis();
-			
+            
+            aggregate_power(g_currentPowerWatts);
+
+            // initial 15 s show price screen
+            if (g_showInitialPrices && g_activeIntervalsCount > 0 && millis() > 15000) {
+              g_showInitialPrices = false;
+            }
+
             // write to ring buffer
             g_powerHistory[g_historyIndex] = g_currentPowerWatts;
             g_historyIndex = (g_historyIndex + 1) % kGraphMaxSamples;
@@ -456,6 +516,9 @@ void tibber_polling_task(void *parameter) {
       }
 	  // guaranteed closure of the socket through whatever path we get here
 	  http.end();
+
+    checkAndFetchPrices(); // Is a new price update required?
+
 	  vTaskDelay(pdMS_TO_TICKS(200));
     } else {
       // Keine WLAN-Verbindung
@@ -468,8 +531,9 @@ void tibber_polling_task(void *parameter) {
 // HTTP endpoints (to connect other equipment, not used for Marstek B2500)
 // -----------------------------------------------------------------------------
 void handleRoot() {
-  server.send(200, "text/plain; charset=utf-8", 
-              String(kDeviceId) + " Shelly Pro 3EM emulator\n");
+  server.sendHeader("Cache-Control", "no-store");
+  // Liefert die HTML-Seite mit dem korrekten Content-Type aus
+  server.send(200, "text/html; charset=utf-8", INDEX_HTML);
 }
 
 void handleStatus() {
@@ -491,6 +555,12 @@ void handleNotFound() {
   server.send(404, "application/json", "{\"error\":\"not found\"}\n");
 }
 
+void handleGetPrices() {
+    server.sendHeader("Cache-Control", "no-store");
+    server.sendHeader("Access-Control-Allow-Origin", "*"); // allow access for external browsers
+    server.send(200, "application/json", getPriceIntervalsJson());
+}
+
 // -----------------------------------------------------------------------------
 // Arduino lifecycle
 // -----------------------------------------------------------------------------
@@ -498,9 +568,10 @@ void setup() {
 
   Serial.begin(115200);
   setCpuFrequencyMhz(80); 
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
 
   setup_display(tibber_bridge_ip);
-  Serial.println("\n[MarstekTibber] Starting Shelly Pro 3EM emulation");
+  Serial.println("\n[MarstekTibber] Starting Shelly emulation");
 
   delay(200);
   WiFi.mode(WIFI_STA);
@@ -523,8 +594,11 @@ void setup() {
     Serial.println("[MarstekTibber] Wi-Fi connection timed out; continuing anyway.");
   }
 
+  initPrices(); 
+
   server.on("/", handleRoot);
   server.on("/status", handleStatus);
+  server.on("/prices",             HTTP_GET, handleGetPrices);
   server.on("/rpc/EM.GetStatus",   HTTP_GET, handleRpcEmGetStatus);
   server.on("/rpc/EM.GetStatus/",  HTTP_GET, handleRpcEmGetStatus);
   server.on("/rpc/EM1.GetStatus",  HTTP_GET, handleRpcEm1GetStatus);
@@ -555,6 +629,16 @@ void loop() {
   handleUdpPacket(udpNew,  2220);
   handleUdpPacket(udpEm50, 2223);
 
+  // Button for price screen
+  if (digitalRead(BUTTON_PIN) == LOW) {
+    if (!g_showInitialPrices && g_priceScreenTriggerMs == 0) {
+      g_showInitialPrices    = true;
+      triggerScreenRefresh   = true;
+      g_priceScreenTriggerMs = millis();
+    }
+    delay(50); // de-bounce
+  }
+  
   vTaskDelay(pdMS_TO_TICKS(1));
 }
 
