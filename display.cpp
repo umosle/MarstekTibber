@@ -23,7 +23,7 @@ volatile bool                 g_showInitialPrices = true;
 extern unsigned long          g_priceScreenTriggerMs;
 
 // -----------------------------------------------------------------------------
-// NEU: Zeichnet die geladene Tibber-Preiskurve auf dem kompletten Bildschirm
+// Zeichnet die geladene Tibber-Preiskurve auf dem kompletten Bildschirm
 // -----------------------------------------------------------------------------
 void drawPriceGraph() {
     if (g_activeIntervalsCount == 0) {

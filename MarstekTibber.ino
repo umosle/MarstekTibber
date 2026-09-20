@@ -37,31 +37,10 @@
 #include <HTTPClient.h>
 #include <base64.h>
 
+#include "configuration.h"
 #include "display.h"
 #include "prices.h"
 #include "index_html.h"
-
-// -----------------------------------------------------------------------------
-// Configuration
-// -----------------------------------------------------------------------------
-// Replace these with your own values before flashing the device.
-constexpr char      kWifiSsid[]             = "WiFi_SSID";
-constexpr char      kWifiPassword[]         = "WiFi_password";
-//constexpr char    kDeviceId[]             = "shellypro3em-ec4609c439c1";
-constexpr char      kDeviceId[]             = "shellyproem50-ec4609c439c2";
-
-const char*         tibber_bridge_ip        = "192.168.178.65";
-const char*         tibber_bridge_password  = "B2CG-B***"; // code beside the QR
-const int           tibber_node_id          = 1;
-const unsigned long tibberIntervalMs        = 3000;
-const char*         TIBBER_ACCESS_TOKEN     = "5B******************************************************************34-1";
-const char*         TIBBER_HOME_ID          = "cc******-****-****-****-***********10c";
-
-// 1. if tibber connection lost decay power slowly over 5 minutes
-// 2. in between samples a slight decay might help against nervouse polling within
-//    dead time of tibber pulse
-const float         decayPowBetweenSamples  = 0.70f; // adjust to avoid oscillation
-const int           BUTTON_PIN              = 0;     // Button for price screen (35-bottom or 0-top, USB left)
 
 
 // -----------------------------------------------------------------------------
@@ -366,31 +345,40 @@ void handleUdpPacket(WiFiUDP& udp, const uint16_t port) {
 // -----------------------------------------------------------------------------
 // Aggregiert die echten Pulse-Rohwerte für das aktuelle 15-Minuten-Intervall
 // -----------------------------------------------------------------------------
+// Keep track of the last interval index we processed
+int g_lastIntervalIndex = -1;
+
 void aggregate_power(int currentWatts) {
-  g_pulsePowerSumInInterval += currentWatts;
-  g_pulseSamplesCount++;
-
   time_t nowTime = time(nullptr);
-  for (int i = 0; i < g_activeIntervalsCount; i++) {
-    // Suchen des aktuell laufenden Zeitfensters (900 Sekunden = 15 Min)
-    if (nowTime >= g_priceIntervals[i].startEpoch && nowTime < (g_priceIntervals[i].startEpoch + 900)) {
-      
-      if (g_pulseSamplesCount > 0) {
-        g_priceIntervals[i].avgPowerWatts = g_pulsePowerSumInInterval / g_pulseSamplesCount;
-      }
+  int currentIntervalIndex = -1;
 
-      // Wenn das Intervall fast vorbei ist (die letzten 3 Sekunden), 
-      // setzen wir die Zähler für den nächsten anstehenden Intervall-Wechsel zurück
-      if (nowTime >= (g_priceIntervals[i].startEpoch + 897)) {
-        if (i < g_activeIntervalsCount - 1 && nowTime >= g_priceIntervals[i+1].startEpoch) {
-          g_pulsePowerSumInInterval = 0;
-          g_pulseSamplesCount = 0;
-        }
-      }
+  // 1. Find the current 15-minute interval
+  for (int i = 0; i < g_activeIntervalsCount; i++) {
+    if (nowTime >= g_priceIntervals[i].startEpoch && nowTime < (g_priceIntervals[i].startEpoch + 900)) {
+      currentIntervalIndex = i;
       break;
     }
   }
+
+  // If no matching interval is found, we cannot aggregate safely
+  if (currentIntervalIndex == -1) {
+    return;
+  }
+
+  // 2. Detect an interval switch: Reset counters if we just crossed into a new 15-min window
+  if (currentIntervalIndex != g_lastIntervalIndex) {
+    g_pulsePowerSumInInterval = 0;
+    g_pulseSamplesCount = 0;
+    g_lastIntervalIndex = currentIntervalIndex;
+  }
+
+  // 3. Accumulate and calculate the true interval average
+  g_pulsePowerSumInInterval += currentWatts;
+  g_pulseSamplesCount++;
+
+  g_priceIntervals[currentIntervalIndex].avgPowerWatts = g_pulsePowerSumInInterval / g_pulseSamplesCount;
 }
+
 
 // -----------------------------------------------------------------------------
 // Reading meter data from Pulse via Tibber Bridge
@@ -450,22 +438,32 @@ void tibber_polling_task(void *parameter) {
             int     valIdx     = power_index + 17;
             int32_t raw_power  = 0;
             
-            if (valType == 0x53)
-              raw_power  = (int16_t)((buffer[valIdx + 0] << 8) | 
-                                      buffer[valIdx + 1]);
-            else if (valType == 0x54) {
-              uint32_t val24   = ((buffer[valIdx + 0] << 16) | 
-                                  (buffer[valIdx + 1] <<  8) |
-                                   buffer[valIdx + 2]);
-              if (val24 & 0x800000) val24 |= 0xFF000000;
-              raw_power        = (int32_t)val24;
-            }
-            else if (valType == 0x55) {
-              raw_power        = ((buffer[valIdx + 0] << 24) | 
-                                  (buffer[valIdx + 1] << 16) | 
-                                  (buffer[valIdx + 2] <<  8) |
-                                   buffer[valIdx + 3]);
-            }
+			if (valType == 0x53) { 
+				// Sicheres Verodern von zwei isolierten Bytes als signed 16-Bit
+				int16_t intermediate = (int16_t)(((uint16_t)(buffer[valIdx + 0] & 0xFF) << 8) | 
+												  (uint16_t)(buffer[valIdx + 1] & 0xFF));
+				raw_power = (int32_t)intermediate;
+			}
+			else if (valType == 0x54) {
+				// 24-Bit Wert sauber zusammenbauen (ohne Geisterbits in den oberen Etagen)
+				uint32_t val24 = (((uint32_t)(buffer[valIdx + 0] & 0xFF)) << 16) |
+								 (((uint32_t)(buffer[valIdx + 1] & 0xFF)) <<  8) |
+								  ((uint32_t)(buffer[valIdx + 2] & 0xFF));
+								 
+				// Korrekte mathematische Sign-Extension für 24-Bit zu signed 32-Bit
+				if (val24 & 0x800000) {
+					raw_power = (int32_t)(val24 | 0xFF000000);
+				} else {
+					raw_power = (int32_t)(val24 & 0x00FFFFFF);
+				}
+			}
+			else if (valType == 0x55) {
+				// Absolut sauberes Zusammenfügen eines echten 32-Bit Ints
+				raw_power = (((int32_t)(buffer[valIdx + 0] & 0xFF)) << 24) |
+							(((int32_t)(buffer[valIdx + 1] & 0xFF)) << 16) |
+							(((int32_t)(buffer[valIdx + 2] & 0xFF)) <<  8) |
+							 ((int32_t)(buffer[valIdx + 3] & 0xFF));
+			}
 
             g_currentPowerWatts   = (int)(static_cast<float>(raw_power) * multiplier);
             for (int i = 0; i < kMaxBatteries; i++) {
@@ -556,9 +554,7 @@ void handleNotFound() {
 }
 
 void handleGetPrices() {
-    server.sendHeader("Cache-Control", "no-store");
-    server.sendHeader("Access-Control-Allow-Origin", "*"); // allow access for external browsers
-    server.send(200, "application/json", getPriceIntervalsJson());
+    streamPriceIntervalsJson(server);
 }
 
 // -----------------------------------------------------------------------------

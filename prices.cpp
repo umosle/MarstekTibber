@@ -1,6 +1,7 @@
 #include "prices.h"
 #include <HTTPClient.h>
 #include <WiFi.h>
+#include <WebServer.h>
 #include <vector> // for dynamic memory use
 
 // Globale Variablen Definitionen
@@ -41,6 +42,33 @@ static int compareFloats(const void* a, const void* b) {
 static void fetchTibberPrices() {
     if (WiFi.status() != WL_CONNECTED) return;
 
+    // ==============================================================================
+    // HERAUSROLLEN: Alles löschen, was älter als 31 Tage (2.678.400 Sek.) ist
+    // ==============================================================================
+    time_t now = time(nullptr);
+    time_t loeschSchwelle = now - (31 * 24 * 60 * 60); // Exakt 31 Tage zurück
+
+    int geleseneWerteIdx = 0;
+    for (int i = 0; i < g_activeIntervalsCount; i++) {
+        // Wenn das Intervall jünger als 31 Tage ist, behalten wir es
+        if (g_priceIntervals[i].startEpoch >= loeschSchwelle) {
+            if (geleseneWerteIdx != i) {
+                g_priceIntervals[geleseneWerteIdx] = g_priceIntervals[i];
+            }
+            geleseneWerteIdx++;
+        }
+    }
+    
+    // Zähler aktualisieren falls Daten herausgerollt wurden
+    if (g_activeIntervalsCount != geleseneWerteIdx) {
+        Serial.printf("[Prices] Rotation: %d veraltete Intervalle aus dem RAM gelöscht.\n", 
+                      (g_activeIntervalsCount - geleseneWerteIdx));
+        g_activeIntervalsCount = geleseneWerteIdx;
+    }
+
+    // ==============================================================================
+    // API ABFRAGE STARTEN (Parser-Code)
+    // ==============================================================================
     HTTPClient http;
     http.begin("https://api.tibber.com/v1-beta/gql");
     http.addHeader("Authorization", "Bearer " + String(TIBBER_ACCESS_TOKEN));
@@ -77,7 +105,7 @@ static void fetchTibberPrices() {
             uint32_t epoch = parseISO8601ToEpoch(startsAt);
             float price = totalVal.toFloat();
 
-            // Prüfen, ob dieses Intervall bereits existiert (Datenrettung!)
+            // 1. Bereits existierende Einträge suchen und UPDATEN
             bool exists = false;
             for (int i = 0; i < g_activeIntervalsCount; i++) {
                 if (g_priceIntervals[i].startEpoch == epoch) {
@@ -87,23 +115,20 @@ static void fetchTibberPrices() {
                 }
             }
 
+            // 2. Nur wenn es ein brandneuer Wert ist (für morgen), hinten anhängen
             if (!exists) {
-                // Wenn das Array voll ist, schieben wir den ältesten Tag (96 Elemente) raus
-                if (g_activeIntervalsCount >= kTotalIntervals) {
-                    memmove(&g_priceIntervals[0], &g_priceIntervals[96], (kTotalIntervals - 96) * sizeof(PriceInterval));
-                    g_activeIntervalsCount -= 96;
-                    Serial.println("[Prices] Ältesten Tag aus dem RAM rotiert.");
+                if (g_activeIntervalsCount < kTotalIntervals) {
+                    g_priceIntervals[g_activeIntervalsCount].startEpoch = epoch;
+                    g_priceIntervals[g_activeIntervalsCount].price = price;
+                    g_priceIntervals[g_activeIntervalsCount].isExpensive = false;
+                    g_priceIntervals[g_activeIntervalsCount].avgPowerWatts = 0; 
+                    g_activeIntervalsCount++;
+                } else {
+                    // Absicherung gegen unerwarteten Überlauf
+                    Serial.println("[Prices] WARNUNG: Array kTotalIntervals voll! Wert für morgen verworfen.");
                 }
-
-                // Am Ende anhängen
-                g_priceIntervals[g_activeIntervalsCount].startEpoch = epoch;
-                g_priceIntervals[g_activeIntervalsCount].price = price;
-                g_priceIntervals[g_activeIntervalsCount].isExpensive = false;
-                g_priceIntervals[g_activeIntervalsCount].avgPowerWatts = 0; // Neu, wartet auf Pulse-Logging
-                g_activeIntervalsCount++;
             }
         }
-
         Serial.printf("[Prices] %d Intervalle eingelesen.\n", g_activeIntervalsCount);
 
         // ==============================================================================
@@ -197,7 +222,8 @@ void checkAndFetchPrices() {
     // 1. Direkt nach dem Booten abfragen (sobald WLAN da ist)
     if (!initialFetchDone && WiFi.status() == WL_CONNECTED) {
         // Kurzer interner Zeitsynchronisations-Check (wichtig für time(nullptr))
-        configTime(3600, 3600, "pool.ntp.org"); 
+        // Offizielle POSIX-Zeitzone für Deutschland (automatische Sommer-/Winterzeit)
+		configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org"); 
         fetchTibberPrices();
         initialFetchDone = true;
         lastFetchMillis = currentMillis;
@@ -232,35 +258,47 @@ bool isCurrentIntervalExpensive() {
     return false;
 }
 
-String getPriceIntervalsJson() {
-    // Schätzung für Buffer-Größe: ca. 120 Zeichen pro Intervall * max 192 Intervalle
-    String json = "";
-    // Reserviert 390 KB RAM vorab für das maximale 31-Tage-JSON, um Heap-Overflows zu verhindern
-    json.reserve(390000); 
-    json += "[\n";
+void streamPriceIntervalsJson(WebServer& server) {
+    server.sendHeader("Cache-Control", "no-store");
+    server.sendHeader("Access-Control-Allow-Origin", "*"); // allow access for external browsers
+    
+    // 1. Initalisiere die Übertragung mit Chunked Encoding (Inhaltstyp, aber ohne Content-Length)
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.send(200, "application/json", ""); // Sendet die HTTP-Header
 
+    // 2. Sende den JSON-Anfang
+    server.sendContent("[\n");
+
+    // 3. Schleife durch die Intervalle und sende jeden Chunk einzeln
     for (int i = 0; i < g_activeIntervalsCount; i++) {
         time_t epoch = g_priceIntervals[i].startEpoch;
         struct tm* timeinfo = localtime(&epoch);
         char timeBuffer[20];
         strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M", timeinfo);
 
-        json += "  {\n";
-        json += "    \"index\": " + String(i) + ",\n";
-        json += "    \"time\": \"" + String(timeBuffer) + "\",\n";
-        json += "    \"epoch\": " + String(g_priceIntervals[i].startEpoch) + ",\n";
-        json += "    \"price\": " + String(g_priceIntervals[i].price, 4) + ",\n";
-        json += "    \"isExpensive\": " + String(g_priceIntervals[i].isExpensive ? "true" : "false") + ",\n";
-        json += "    \"power\": " + String(g_priceIntervals[i].avgPowerWatts) + "\n";
-        json += "  }";
+        // Baue den String für nur EIN Intervall
+        String chunk = "  {\n";
+        chunk += "    \"index\": " + String(i) + ",\n";
+        chunk += "    \"time\": \"" + String(timeBuffer) + "\",\n";
+        chunk += "    \"epoch\": " + String(g_priceIntervals[i].startEpoch) + ",\n";
+        chunk += "    \"price\": " + String(g_priceIntervals[i].price, 4) + ",\n";
+        chunk += "    \"isExpensive\": " + String(g_priceIntervals[i].isExpensive ? "true" : "false") + ",\n";
+        chunk += "    \"power\": " + String(g_priceIntervals[i].avgPowerWatts) + "\n";
+        chunk += "  }";
         
         if (i < g_activeIntervalsCount - 1) {
-            json += ",\n";
+            chunk += ",\n";
         } else {
-            json += "\n";
+            chunk += "\n";
         }
+
+        // Direkt senden, belastet den RAM gegen Null
+        server.sendContent(chunk);
     }
     
-    json += "]";
-    return json;
+    // 4. Sende das JSON-Ende
+    server.sendContent("]");
+    
+    // 5. Beende die Übertragung (wichtig bei Chunked!)
+    server.sendContent(""); 
 }

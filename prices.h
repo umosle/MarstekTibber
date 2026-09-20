@@ -3,9 +3,12 @@
 
 #include <Arduino.h>
 
+class WebServer;
+
 // --- Konfiguration ---
 constexpr int kNumPeaks = 32;          // Top X teuerste 15-Min-Intervalle für Nulleinspeisung
 constexpr int kTotalIntervals = 3072;  // memory for 1 month (31 + 1d)
+
 extern const char*  TIBBER_ACCESS_TOKEN;
 extern const char*  TIBBER_HOME_ID;
 
@@ -26,8 +29,6 @@ extern float g_currentThreshold;
 void initPrices();
 void checkAndFetchPrices();
 bool isCurrentIntervalExpensive();
-
-// for HTTP endpoint
-String getPriceIntervalsJson();
+void streamPriceIntervalsJson(WebServer& server);
 
 #endif  // PRICES_H
