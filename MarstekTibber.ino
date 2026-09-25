@@ -387,14 +387,35 @@ void tibber_polling_task(void *parameter) {
   HTTPClient http;
   Serial.println("Starting SML-Parser...");
   
+  // Startet mit deiner konfigurierten ID (oder standardmäßig 1)
+  int active_node_id = tibber_node_id; 
+  if (active_node_id <= 0) active_node_id = 1;
+
+  // Speichert die letzte ID, um die URL fragmentsicher und ohne Heap-Last zu verwalten
+  int last_applied_node_id = -1; 
+  char sml_url_buffer[128] = {0};
+  char nodes_url_buffer[128] = {0};
+
+  // Die Nodes-URL bleibt statisch
+  snprintf(nodes_url_buffer, sizeof(nodes_url_buffer), "http://%s/nodes.json", tibber_bridge_ip);
+
   // Einmaliges, fragmentsicheres Berechnen der Tibber-Verbindungsdaten vor dem Loop-Start
-  const String url = "http://" + String(tibber_bridge_ip) + "/node_data.json?node_id=" + String(tibber_node_id);
   const String auth_string = "admin:" + String(tibber_bridge_password);
   const String auth_base64 = "Basic " + base64::encode((uint8_t*)auth_string.c_str(), auth_string.length());
 
+  // Schutz vor permanentem Polling der nodes.json bei totalem Verbindungsabbruch
+  unsigned long nextAllowedDiscoveryMs = 0;
+
   for (;;) {
     if (WiFi.status() == WL_CONNECTED) {
-      http.begin(url);
+
+      // URL wird nur bei einer echten ID-Änderung (oder beim Start) fragmentsicher neu gebaut
+      if (active_node_id != last_applied_node_id) {
+        snprintf(sml_url_buffer, sizeof(sml_url_buffer), "http://%s/node_data.json?node_id=%d", tibber_bridge_ip, active_node_id);
+        last_applied_node_id = active_node_id;
+      }
+
+      http.begin(String(sml_url_buffer));
       http.addHeader("Authorization", auth_base64);
       http.addHeader("Connection", "close"); // Wichtig: Verbindung sofort schließen
 
@@ -510,12 +531,35 @@ void tibber_polling_task(void *parameter) {
         tibberConnected       = false;
         triggerScreenRefresh  = true;
         http.end();
+
+        // Einmalige automatische Recovery-Erkennung im Fehlerfall (Schutz vor permanentem Polling: max. alle 60 Sek)
+        if (millis() > nextAllowedDiscoveryMs) {
+          HTTPClient discoveryHttp;
+          discoveryHttp.begin(String(nodes_url_buffer));
+          discoveryHttp.addHeader("Authorization", auth_base64);
+          discoveryHttp.addHeader("Connection", "close");
+          discoveryHttp.setConnectTimeout(3000);
+          discoveryHttp.setTimeout(3000);
+          
+          int discCode = discoveryHttp.GET();
+          if (discCode == 200) {
+            String payload = discoveryHttp.getString();
+            int parsed_id = extractJsonInt(payload, "node_id");
+            if (parsed_id > 0 && parsed_id != active_node_id) {
+              active_node_id = parsed_id; // ID wird zur Laufzeit ohne Heap-Fragmentierung angepasst
+              Serial.printf("[Tibber] Node-ID shifted dynamically to: %d\n", active_node_id);
+            }
+          }
+          discoveryHttp.end();
+          nextAllowedDiscoveryMs = millis() + 60000;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(6000));
       }
 	  // guaranteed closure of the socket through whatever path we get here
 	  http.end();
 
-    checkAndFetchPrices(); // Is a new price update required?
+      checkAndFetchPrices(); // Is a new price update required?
 
 	  vTaskDelay(pdMS_TO_TICKS(200));
     } else {
@@ -524,6 +568,7 @@ void tibber_polling_task(void *parameter) {
     }
   } 
 }
+
 
 // -----------------------------------------------------------------------------
 // HTTP endpoints (to connect other equipment, not used for Marstek B2500)
