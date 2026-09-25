@@ -388,7 +388,7 @@ void tibber_polling_task(void *parameter) {
   Serial.println("Starting SML-Parser...");
   
   // Einmaliges, fragmentsicheres Berechnen der Tibber-Verbindungsdaten vor dem Loop-Start
-  const String url = "http://" + String(tibber_bridge_ip) + "/data.json?node_id=" + String(tibber_node_id);
+  const String url = "http://" + String(tibber_bridge_ip) + "/node_data.json?node_id=" + String(tibber_node_id);
   const String auth_string = "admin:" + String(tibber_bridge_password);
   const String auth_base64 = "Basic " + base64::encode((uint8_t*)auth_string.c_str(), auth_string.length());
 
